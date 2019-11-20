@@ -83,7 +83,7 @@ def listen_to_speech():
             # for testing purposes, we're just using the default API key
             # to use another API key, use `r.recognize_google(audio, key="GOOGLE_SPEECH_RECOGNITION_API_KEY")`
             # instead of `r.recognize_google(audio)`
-            recog_results = r.recognize_google(audio)
+            # recog_results = r.recognize_google(audio)
             print("[speech recognition] Google Speech Recognition thinks you said \"" + recog_results + "\"")
             # if recognizing quit and exit then exit the program
             if recog_results == "quit" or recog_results == "exit":
@@ -94,10 +94,14 @@ def listen_to_speech():
             print("[speech recognition] Could not request results from Google Speech Recognition service; {0}".format(e))
 # -------------------------------------#
 
+pitch = 0
+volume = 0
 # pitch & volume detection
 # -------------------------------------#
 def sense_microphone():
     global quit
+    global pitch
+    global volume
     while not quit:
         data = stream.read(1024,exception_on_overflow=False)
         samples = num.fromstring(data,
@@ -109,12 +113,13 @@ def sense_microphone():
         volume = num.sum(samples**2)/len(samples)
         # Format the volume output so that at most
         # it has six decimal numbers.
-        volume = "{:.6f}".format(volume)
 
         # uncomment these lines if you want pitch or volume
         print("p"+str(pitch))
-        print("v"+str(volume))
+        print("v"+str("{:.6f}".format(volume)))
 # -------------------------------------#
+
+
 
 class Ball(object):
 
@@ -164,6 +169,7 @@ class Model(object):
         # STATE VARS
         self.paused = False
         self.i = 0  # "frame count" for debug
+        self.dest = 0
 
     def reset_ball(self, who_scored):
         """Place the ball anew on the loser's side."""
@@ -259,6 +265,45 @@ class Model(object):
         self.check_if_paddled()
 
 
+    @staticmethod
+    def normalize_pitch(pitch, height, pitch_range=[100, 260]):
+        num_classes = 10
+        height_step = height // num_classes
+        positions = [height_step * i for i in range(num_classes)]
+        band = max(pitch_range) - min(pitch_range)
+        delta = band // num_classes
+        ref_pitches = [delta * i + min(pitch_range) for i in range(num_classes)]
+
+        print('pitch', pitch)
+        print(positions)
+        destination = 0
+        for i in range(num_classes - 1):
+            if ref_pitches[i] <= pitch and pitch < ref_pitches[i+1]:
+                destination = positions[i]
+                break
+        if pitch < ref_pitches[0]:
+            destination = 0
+        elif ref_pitches[-1] <= pitch:
+            destination = height
+
+        print('destination', destination)
+        return destination
+
+    def calc_speed_to_dest(self, y):
+        sign = lambda x: math.copysign(1, x)
+        max_speed = 30
+        min_speed = - max_speed
+        print('raw speed', self.dest - y)
+        speed = sign(self.dest - y) * math.sqrt(abs(self.dest - y))
+        # raw_speed = self.dest - y
+        if speed > max_speed:
+            speed = max_speed
+        elif speed < min_speed:
+            speed = min_speed
+        else:
+            speed = speed
+        return int(speed)
+
     def update(self):
         """Work through all pressed keys, update and call update_ball."""
         pks = self.pressed_keys
@@ -275,16 +320,36 @@ class Model(object):
         # player 1: the user controls the left player by W/S but you should change it to VOICE input
         p1 = self.players[0]
         p1.last_movements.pop(0)
-        if p1.up_key in pks and p1.down_key not in pks: #change this to voice input
-            p1.y -= self.speed
-            p1.last_movements.append(-self.speed)
-        elif p1.up_key not in pks and p1.down_key in pks: #change this to voice input
-            p1.y += self.speed
-            p1.last_movements.append(+self.speed)
-        else:
-            # notice how we popped from _place_ zero,
-            # but append _a number_ zero here. it's not the same.
-            p1.last_movements.append(0)
+
+        # update the destination only when volume > 0.001
+        if volume > 0.0008:
+            print('volume activated')
+            self.dest = self.normalize_pitch(pitch, self.HEIGHT)  # update the destination
+        speed = self.calc_speed_to_dest(p1.y)
+        print('p1.y', p1.y)
+        print('destination', self.dest)
+        print('speed', speed)
+        p1.y += speed
+        p1.last_movements.append(speed)  # pretend as if the paddle was there from the beginning
+        if p1.y < 0:
+            p1.y = 0
+            self.dest = 0
+        elif p1.y > self.HEIGHT:
+            p1.y = self.HEIGHT
+            self.dest = self.HEIGHT
+
+        # if p1.up_key in pks and p1.down_key not in pks: #change this to voice input
+        #     p1.y = self.normalize_pitch(self.pitch)
+        #     p1.last_movements.append(-self.speed)
+        #     # p1.y -= self.speed
+        #     # p1.last_movements.append(-self.speed)
+        # elif p1.up_key not in pks and p1.down_key in pks: #change this to voice input
+        #     p1.y += self.speed
+        #     p1.last_movements.append(+self.speed)
+        # else:
+        #     # notice how we popped from _place_ zero,
+        #     # but append _a number_ zero here. it's not the same.
+        #     p1.last_movements.append(0)
            
         # ----------------- DO NOT CHANGE BELOW ----------------
         # player 2: the other user controls the right player by O/L
@@ -388,13 +453,17 @@ label = pyglet.text.Label(str(p1_score)+':'+str(p2_score),
 @window.event
 def on_draw():
     #window.clear()
-    label.draw()
+    try:
+        label.draw()
+    except KeyboardInterrupt:
+        exit()
+    
 
 # speech recognition thread
 # -------------------------------------#
 # start a thread to listen to speech
-speech_thread = threading.Thread(target=listen_to_speech, args=())
-speech_thread.start()
+# speech_thread = threading.Thread(target=listen_to_speech, args=())
+# speech_thread.start()
 # -------------------------------------#
 
 # pitch & volume detection
